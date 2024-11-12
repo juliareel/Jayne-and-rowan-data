@@ -1,59 +1,58 @@
 import streamlit as st
-import pandas as pd
-import psycopg2
-from sqlalchemy import create_engine
+from db_utils import load_invite_groups, load_parties, execute_query
+from data_processing import filter_selections
+from plots import create_pie_chart, summary_stats, progress_bar
 
-# Database credentials
-host = "cbdhrtd93854d5.cluster-czrs8kj4isg7.us-east-1.rds.amazonaws.com"
-database = "d3ukq1l0lc26bd"
-port = "5432"
-username = "uapst7uqgl9l0n"
-password = "pfcd5ad7623fefef4cff01ee504b9d22aaca49bfe9d7ce2ff71231f0c995f6020"
+# st.set_page_config(layout="wide")
 
-# Create the database URL
-db_url = f"postgresql://{username}:{password}@{host}:{port}/{database}"
-
-# Create a database connection using SQLAlchemy
-engine = create_engine(db_url)
-
-# Function to load data from your PostgreSQL database
-# @st.cache  # This decorator caches the data for faster performance
-def load_data():
-    query = """
-    -- Main, basic query to pull all invite list data, getting data for foreign key IDs
-SELECT 
-    invite_list.name,
-    parties.party_name,
-    invited_by_groups.group_name as invitatation_group,
-    invite_list.response,
-    CASE 
-        WHEN invite_list.definite_invite = 1 THEN 'Yes'
-        ELSE 'No'
-    END AS definite_invite,
-    partner_guest.name AS partner_name -- Getting the name of the partner guest
-FROM invite_list
-LEFT JOIN parties
-ON invite_list.party_id = parties.party_id
-LEFT JOIN invited_by_groups 
-ON invite_list.invite_group_id = invited_by_groups.invite_group_id
-LEFT JOIN invite_list AS partner_guest -- Self-join to get the partner's name
-ON invite_list.partner_id = partner_guest.guest_id
-order by party_name, invited_by_groups.group_name; """
-    return pd.read_sql(query, engine)
-
-# Streamlit app
-st.title("Dashboard App")
-
+st.set_page_config(page_title="RSVP Responses", layout="wide")
 # Load and display data
 try:
-    data = load_data()
-    st.subheader("Data Overview")
-    st.dataframe(data)
+    from data_processing import main_query_base
+    main_data = execute_query(main_query_base)
 except Exception as e:
     st.error(f"Error loading data: {e}")
 
-# Additional features (e.g., filters, visualizations, etc.)
-st.subheader("Data Insights")
-st.write(data.describe())
+# UI Components
+with st.sidebar:
+    st.title("RSVP Responses")
 
-# You can add more Streamlit elements for interactivity and visualizations
+    
+    st.subheader('Filters')
+    options_invite_groups = load_invite_groups()
+    options_parties = load_parties()
+    options_rsvpresponse = ['Yes', 'No', 'No Response']
+
+    # selection_invite_groups = st.segmented_control("Invited By:", options_invite_groups, selection_mode="multi")
+    # selection_parties = st.segmented_control("Party:", options_parties, selection_mode="multi")
+    # selection_rsvp = st.segmented_control("RSVP Response:", options_rsvpresponse, selection_mode='multi')
+    selection_invite_groups = st.multiselect("Invited By:", options_invite_groups)
+    selection_parties = st.multiselect("Party:", options_parties)
+    selection_rsvp = st.multiselect("RSVP Response:", options_rsvpresponse)
+    onelinepercouple = st.checkbox("One line per couple")
+
+    # Filtering Data
+    filtered_data = filter_selections(selection_invite_groups, selection_parties, selection_rsvp, onelinepercouple)
+
+# Main Area
+col1, col2 = st.columns([0.2, 0.8], gap='large')
+with col1:
+    progress_bar(filtered_data)
+    if onelinepercouple:
+        st.metric("Number of Couples", len(filtered_data))
+    else:
+        st.metric("Number of Guests", len(filtered_data))
+    summary_stats(filtered_data)
+
+with col2:
+    with st.container():
+        col3, col4 = st.columns(2)
+        with col3:
+            # Pie Chart
+            fig = create_pie_chart(filtered_data)
+            st.plotly_chart(fig)
+        with col4:
+            st.write("\n") 
+    # Table
+    with col2:
+        st.dataframe(filtered_data)
